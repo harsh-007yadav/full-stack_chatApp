@@ -1,35 +1,128 @@
+@Library('Shared') _
 pipeline {
-  agent any
-
-  environment {
-    SONAR_HOME = tool "sonarqube"
-  }
-
-  stages {
-    stage('Clean UP') {
-      steps {
-        cleanWs()
-      }
+    agent {label 'Node'}
+    
+    environment{
+        SONAR_HOME = tool "Sonar"
     }
-    stage('Code Check out') {
-      steps {
-        git branch: 'master',
-          url: 'https://github.com/iemafzalhassan/full-stack_chatApp.git'
-      }
+    
+    parameters {
+        string(name: 'FRONTEND_DOCKER_TAG', defaultValue: '', description: 'Setting docker image for latest push')
+        string(name: 'BACKEND_DOCKER_TAG', defaultValue: '', description: 'Setting docker image for latest push')
     }
-    stage('Code Quality') {
-      steps {
-        withSonarQubeEnv("sonarqube") {
-          sh "$SONAR_HOME/bin/sonar-scanner -Dsonar.projectName=chat-app -Dsonar.projectKey=chat-app -X"
+    
+    stages {
+        stage("Validate Parameters") {
+            steps {
+                script {
+                    if (params.FRONTEND_DOCKER_TAG == '' || params.BACKEND_DOCKER_TAG == '') {
+                        error("FRONTEND_DOCKER_TAG and BACKEND_DOCKER_TAG must be provided.")
+                    }
+                }
+            }
         }
-      }
-    }
-    stage('Deploy') {
-      steps {
-        script {
-          sh 'docker compose up -d --build'
+        stage("Workspace cleanup"){
+            steps{
+                script{
+                    cleanWs()
+                }
+            }
         }
-      }
+        
+        stage('Git: Code Checkout') {
+            steps {
+                script{
+                    code_checkout("https://github.com/harsh-007yadav/full-stack_chatApp.git","main")
+                }
+            }
+        }
+        
+        stage("Trivy: Filesystem scan"){
+            steps{
+                script{
+                    trivy_scan()
+                }
+            }
+        }
+
+        stage("OWASP: Dependency check"){
+            steps{
+                script{
+                    owasp_dependency()
+                }
+            }
+        }
+        
+        stage("SonarQube: Code Analysis"){
+            steps{
+                script{
+                    sonarqube_analysis("Sonar","chatapp","chatapp")
+                }
+            }
+        }
+        
+        stage("SonarQube: Code Quality Gates"){
+            steps{
+                script{
+                    sonarqube_code_quality()
+                }
+            }
+        }
+        
+        stage('Exporting environment variables') {
+            parallel{
+                stage("Backend env setup"){
+                    steps {
+                        script{
+                            dir("Automations"){
+                                sh "bash updatebackendnew.sh"
+                            }
+                        }
+                    }
+                }
+                
+                stage("Frontend env setup"){
+                    steps {
+                        script{
+                            dir("Automations"){
+                                sh "bash updatefrontendnew.sh"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage("Docker: Build Images"){
+            steps{
+                script{
+                        dir('backend'){
+                            docker_build("chatapp-backend-beta","${params.BACKEND_DOCKER_TAG}","raoharsh007")
+                        }
+                    
+                        dir('frontend'){
+                            docker_build("chatapp-frontend-beta","${params.FRONTEND_DOCKER_TAG}","raoharsh007")
+                        }
+                }
+            }
+        }
+        
+        stage("Docker: Push to DockerHub"){
+            steps{
+                script{
+                    docker_push("chatapp-backend-beta","${params.BACKEND_DOCKER_TAG}","raoharsh007") 
+                    docker_push("chatapp-frontend-beta","${params.FRONTEND_DOCKER_TAG}","raoharsh007")
+                }
+            }
+        }
     }
-  }
+    post{
+        success{
+            archiveArtifacts artifacts: '*.xml', followSymlinks: false
+            build job: "Chatapp-CD", parameters: [
+                string(name: 'FRONTEND_DOCKER_TAG', value: "${params.FRONTEND_DOCKER_TAG}"),
+                string(name: 'BACKEND_DOCKER_TAG', value: "${params.BACKEND_DOCKER_TAG}")
+            ]
+        }
+    }
 }
