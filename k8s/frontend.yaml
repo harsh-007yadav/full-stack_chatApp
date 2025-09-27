@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: chatapp-frontend
-        image: image: raoharsh007/chatapp-frontend-beta:__FRONTEND_TAG__
+        image: image: raoharsh007/chatapp-frontend-beta:v2.5
 
         ports:
         - containerPort: 80
